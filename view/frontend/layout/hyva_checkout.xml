@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<page xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:noNamespaceSchemaLocation="urn:magento:framework:View/Layout/etc/page_configuration.xsd"
+>
+    <head>
+        <script src="https://unpkg.com/@dintero/checkout-web-sdk@0.8.0/dist/dintero-checkout-web-sdk.umd.min.js" src_type="url" />
+    </head>
+    <body>
+        <referenceContainer name="magewire.plugin.scripts">
+            <block
+                class="Dintero\HyvaCheckout\Block\Checkout"
+                name="checkout.payment.methods.after.dintero"
+                   as="dintero_checkout_methods_after"
+                   template="Dintero_HyvaCheckout::payment/method/dintero-js.phtml"
+            />
+        </referenceContainer>
+    </body>
+</page>

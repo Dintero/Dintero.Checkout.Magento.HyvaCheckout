@@ -1,0 +1,171 @@
+<?php var_dump(get_class($block)); ?>
+<script type="module">
+    import sessionManager from "<?= $escaper->escapeUrl($block->getViewFileUrl("Dintero_HyvaCheckout::js/session-manager.js")); ?>";
+
+    (() => {
+        hyvaCheckout.api.after(() => {
+
+            const dinteroConfig = <?= $block->getJsonConfig(); ?> || {};
+            let checkoutInstance;
+            let dinteroSessionId;
+
+            const updateSession = () => {
+                console.log('UPDATING');
+                if (checkoutInstance !== undefined) {
+                    checkoutInstance
+                        .lockSession()
+                        .then(() => {
+                            sessionManager.updateSession().then(() => checkoutInstance.refreshSession())
+                        });
+                }
+            }
+
+            hyvaCheckout.payment.registerMethod({
+                code: 'dintero',
+                method: {
+                    initialize: async function() {
+                        window.addEventListener('shipping_method_selected', updateSession);
+                        window.addEventListener('checkout:shipping:method-activate', updateSession);
+                        window.addEventListener('shipping:method:update', updateSession);
+                        window.addEventListener('coupon_code_applied', updateSession);
+                        window.addEventListener('coupon_code_revoked', updateSession);
+
+                        sessionManager
+                            .initSession()
+                            .then(resp => {
+                                this.mountCheckout(resp.id);
+                                return resp;
+                            })
+                            .then(resp => {
+                                dinteroSessionId = resp.id;
+                                return resp;
+                            })
+                    },
+
+                    canPlaceOrder: function() {
+                        return false;
+                    },
+
+                    validate: async function() {
+                        try {
+
+                            const agreementsComponent = Magewire
+                                .find('checkout.terms-conditions');
+                            let agreements = [];
+                            if (agreementsComponent) {
+                                agreements = agreementsComponent.get('termAcceptance');
+                            }
+
+                            await Magewire
+                                .find('checkout.payment.method.dintero')
+                                .call('validateCheckout', dinteroSessionId, agreements);
+
+                            return true;
+                        } catch (err) {
+                            return false;
+                        }
+                    },
+
+                    mountCheckout: function(sid) {
+
+                        dintero.embed({
+                            container: document.getElementById('dintero-checkout'),
+                            popOut: dinteroConfig.isPopout,
+                            sid: sid,
+                            language: dinteroConfig.language,
+
+                            /**
+                             * Payment error handler
+                             *
+                             * @param event
+                             * @param checkout
+                             */
+                            onPaymentError: function(event, checkout) {
+                                document.dispatchEvent(
+                                    new CustomEvent('dintero:payment:failed', {
+                                        detail: {
+                                            message: hyva.str('The payment was out of date. Refresh the page to try again')
+                                        }
+                                    })
+                                );
+                                checkout.destroy();
+                            },
+
+                            /**
+                             * Session updates event handler
+                             *
+                             * @param event
+                             * @param checkout
+                             */
+                            onSession: function(event, checkout) {
+                                sessionManager.updateTotals(checkout?.session?.id).then(() => {
+                                    const shippingMethod = checkout?.session?.order?.shipping_option;
+                                    if (shippingMethod && shippingMethod.id) {
+                                        window.dispatchEvent(
+                                            new CustomEvent('checkout:shipping:method-select', {
+                                                detail: {
+                                                    method: shippingMethod.id
+                                                }
+                                            })
+                                        )
+                                    }
+
+                                    // no need to update session for express
+                                    if (checkout?.session?.express === undefined) {
+                                        updateSession();
+                                    }
+                                });
+                            },
+
+                            /**
+                             * Session locked event handler
+                             *
+                             * @param event
+                             * @param checkout
+                             */
+                            onSessionLockFailed: function(event, checkout) {
+                                console.log('Session lock failed');
+                            },
+
+                            /**
+                             * Session validation event handler
+                             *
+                             * @param event
+                             * @param checkout
+                             * @param callback
+                             */
+                            onValidateSession: async function(event, checkout, callback) {
+                                const checkoutValid = await hyvaCheckout.validation.validate();
+                                if (!checkoutValid) {
+                                    callback({
+                                        success: false,
+                                        clientValidationError: hyva.str('Please, fill in all required fields.')
+                                    });
+                                    return;
+                                }
+                                callback({success: true});
+                            },
+                            onPayment: function(event, checkout) {
+                                document.dispatchEvent(new CustomEvent('dintero.payment.done'))
+                                const form = document.createElement('form');
+                                form.method = 'POST';
+                                form.action = event.href;
+                                const hiddenField = document.createElement('input');
+                                hiddenField.type = 'hidden';
+                                hiddenField.name = 'form_key';
+                                hiddenField.value = hyva.getFormKey();
+                                form.appendChild(hiddenField);
+                                document.body.appendChild(form);
+                                form.submit();
+                            }
+                        }).then(checkout => {
+                            checkoutInstance = checkout;
+                            return checkout;
+                        });
+                    },
+                }
+            });
+        });
+    })();
+</script>
+<?php isset($hyvaCsp) && $hyvaCsp->registerInlineScript() ?>

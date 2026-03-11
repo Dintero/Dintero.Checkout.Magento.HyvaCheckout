@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:module:Magento_Config:etc/system_file.xsd">
+    <system>
+        <section id="payment">
+            <group id="dintero">
+                <field id="embed_type">
+                    <comment><![CDATA[If set to <b>express</b>, will replace checkout container with Dintero checkout.</br>For Hyva Checkout only <b>Default</b> is applicable unless Luma checkout is used.]]></comment>
+                </field>
+            </group>
+        </section>
+    </system>
+</config>

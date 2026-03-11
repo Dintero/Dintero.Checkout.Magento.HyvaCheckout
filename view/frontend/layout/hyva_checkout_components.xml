@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<page xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:noNamespaceSchemaLocation="urn:magento:framework:View/Layout/etc/page_configuration.xsd"
+>
+    <body>
+        <referenceBlock name="checkout.payment.methods">
+            <block name="checkout.payment.method.dintero"
+                   as="dintero"
+                   template="Dintero_HyvaCheckout::payment/method/dintero.phtml"
+            >
+                <arguments>
+                    <argument name="magewire" xsi:type="object">
+                        \Dintero\HyvaCheckout\Model\Magewire\Payment\Method\Dintero
+                    </argument>
+                    <argument name="method_code" xsi:type="string">dintero</argument>
+                    <argument name="component" xsi:type="string">Dintero_HyvaCheckout/js/dintero</argument>
+                </arguments>
+            </block>
+        </referenceBlock>
+    </body>
+</page>
+
