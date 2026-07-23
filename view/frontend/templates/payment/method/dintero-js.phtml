@@ -1,4 +1,44 @@
-<?php var_dump(get_class($block)); ?>
+<?php
+/** @var \Dintero\HyvaCheckout\Block\Checkout $block */
+/** @var \Magento\Framework\Escaper $escaper */
+/** @var \Hyva\Theme\ViewModel\HyvaCsp $hyvaCsp */
+?>
+<?php if ($block->isRedirect()): ?>
+<script type="module">
+    (() => {
+        hyvaCheckout.api.after(() => {
+
+            <?php /* The redirect towards Dintero is produced server side by the place order */ ?>
+            <?php /* service, which only hands out a url once the whole checkout validates. */ ?>
+            <?php /* @see \Dintero\HyvaCheckout\Model\Magewire\Payment\PlaceOrderService */ ?>
+            hyvaCheckout.payment.registerMethod({
+                code: 'dintero',
+                method: {
+                    canPlaceOrder: async function() {
+                        return true;
+                    },
+
+                    placeOrder: async function({ fallback }) {
+                        const agreementsComponent = Magewire.find('checkout.terms-conditions');
+                        let agreements = [];
+
+                        if (agreementsComponent) {
+                            agreements = agreementsComponent.get('termAcceptance');
+                        }
+
+                        <?php /* Persist the accepted terms so they can be enforced server side. */ ?>
+                        await Magewire
+                            .find('checkout.payment.method.dintero')
+                            .call('checkAndSaveAgreements', agreements);
+
+                        await fallback();
+                    },
+                }
+            });
+        });
+    })();
+</script>
+<?php else: ?>
 <script type="module">
     import sessionManager from "<?= $escaper->escapeUrl($block->getViewFileUrl("Dintero_HyvaCheckout::js/session-manager.js")); ?>";
 
@@ -10,7 +50,6 @@
             let dinteroSessionId;
 
             const updateSession = () => {
-                console.log('UPDATING');
                 if (checkoutInstance !== undefined) {
                     checkoutInstance
                         .lockSession()
@@ -141,6 +180,17 @@
                                         success: false,
                                         clientValidationError: hyva.str('Please, fill in all required fields.')
                                     });
+
+                                    checkout.refreshSession().catch(() => {
+                                        document.dispatchEvent(
+                                            new CustomEvent('dintero:payment:failed', {
+                                                detail: {
+                                                    message: hyva.str('The payment was out of date. Refresh the page to try again')
+                                                }
+                                            })
+                                        );
+                                    });
+
                                     return;
                                 }
                                 callback({success: true});
@@ -168,4 +218,5 @@
         });
     })();
 </script>
+<?php endif ?>
 <?php isset($hyvaCsp) && $hyvaCsp->registerInlineScript() ?>

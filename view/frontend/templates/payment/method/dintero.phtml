@@ -1,14 +1,12 @@
 <?php
 declare(strict_types=1);
 
+use Dintero\HyvaCheckout\Block\Checkout;
 use Magento\Framework\Escaper;
-use Magento\Framework\View\Element\Template;
-use Hyva\Theme\ViewModel\HyvaCsp;
 
-/** @var Template $block */
+/** @var Checkout $block */
 /** @var Escaper $escaper */
 /** @var \Magento\Quote\Api\Data\PaymentMethodInterface $method */
-/** @var HyvaCsp $hyvaCsp */
 $method = $block->getData('method');
 
 // Access payment method properties
@@ -18,7 +16,14 @@ $method = $block->getData('method');
 <div class="col-span-6">
     <label class="block font-medium text-gray-700"></label>
     <div>
-        <div id="dintero-checkout" wire:ignore></div>
+        <?php if ($block->isRedirect()): ?>
+            <p class="text-sm text-gray-700">
+                <?= $escaper->escapeHtml(
+                    __('You will be redirected to Dintero to complete your payment after placing the order.')
+                ) ?>
+            </p>
+        <?php else: ?>
+            <div id="dintero-checkout" wire:ignore></div>
+        <?php endif ?>
     </div>
 </div>
-
