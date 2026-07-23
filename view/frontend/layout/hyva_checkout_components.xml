@@ -4,7 +4,8 @@
 >
     <body>
         <referenceBlock name="checkout.payment.methods">
-            <block name="checkout.payment.method.dintero"
+            <block class="Dintero\HyvaCheckout\Block\Checkout"
+                   name="checkout.payment.method.dintero"
                    as="dintero"
                    template="Dintero_HyvaCheckout::payment/method/dintero.phtml"
             >
