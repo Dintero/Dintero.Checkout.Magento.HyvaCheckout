@@ -118,7 +118,14 @@ class PlaceOrderService extends AbstractPlaceOrderService
         int|null $orderId = null
     ): EvaluationResultInterface {
         if (!$this->canRedirect()) {
-            return $resultFactory->createSuccess();
+            /*
+             * The embedded flow never places the order through this service: the Dintero iframe posts
+             * to dintero/payment/success instead. Reporting success here would let the main component
+             * finish the checkout without an order having been created.
+             */
+            return $resultFactory->createErrorMessage(
+                __('The Dintero embedded checkout completes the payment, the order cannot be placed here.')
+            );
         }
 
         /** @var PlaceOrderRedirect $redirect */

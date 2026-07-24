@@ -180,17 +180,10 @@
                                         success: false,
                                         clientValidationError: hyva.str('Please, fill in all required fields.')
                                     });
-
-                                    checkout.refreshSession().catch(() => {
-                                        document.dispatchEvent(
-                                            new CustomEvent('dintero:payment:failed', {
-                                                detail: {
-                                                    message: hyva.str('The payment was out of date. Refresh the page to try again')
-                                                }
-                                            })
-                                        );
-                                    });
-
+                                    const dinteroiFrame = document.querySelector('#dintero-checkout iframe');
+                                    if (dinteroiFrame !== null) {
+                                        dinteroiFrame.src = dinteroiFrame.src;
+                                    }
                                     return;
                                 }
                                 callback({success: true});
