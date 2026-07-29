@@ -2,9 +2,7 @@
 
 namespace Dintero\HyvaCheckout\Model\Magewire\Payment\Method;
 
-use Dintero\Checkout\Helper\Config as ConfigHelper;
 use Dintero\Checkout\Api\SessionManagementInterface as DinteroSessionManagement;
-use Dintero\Checkout\Model\Api\Client;
 use Hyva\Checkout\Model\Magewire\Component\EvaluationInterface;
 use Hyva\Checkout\Model\Magewire\Component\EvaluationResultFactory;
 use Hyva\Checkout\Model\Magewire\Component\EvaluationResultInterface;
@@ -19,19 +17,9 @@ use Magewirephp\Magewire\Component;
 class Dintero extends Component implements EvaluationInterface
 {
     /**
-     * @var Client $client
-     */
-    private $client;
-
-    /**
      * @var Session $checkoutSession
      */
     private $checkoutSession;
-
-    /**
-     * @var ConfigHelper $config
-     */
-    private $config;
 
     /**
      * @var AgreementsValidatorInterface $agreementValidator
@@ -65,9 +53,7 @@ class Dintero extends Component implements EvaluationInterface
     /**
      * Define class dependencies
      *
-     * @param Client $client
      * @param Session $checkoutSession
-     * @param ConfigHelper $config
      * @param AgreementsValidatorInterface $agreementValidator
      * @param CartRepositoryInterface $cartRepository
      * @param SubmitQuoteValidator $submitQuoteValidator
@@ -76,9 +62,7 @@ class Dintero extends Component implements EvaluationInterface
      * @param EvaluationResultFactory $evaluationResultFactory
      */
     public function __construct(
-        Client $client,
         Session $checkoutSession,
-        ConfigHelper $config,
         AgreementsValidatorInterface $agreementValidator,
         CartRepositoryInterface $cartRepository,
         SubmitQuoteValidator $submitQuoteValidator,
@@ -86,9 +70,7 @@ class Dintero extends Component implements EvaluationInterface
         DinteroSessionManagement $dinteroSessionManagement,
         EvaluationResultFactory $evaluationResultFactory
     ) {
-        $this->client = $client;
         $this->checkoutSession = $checkoutSession;
-        $this->config = $config;
         $this->agreementValidator = $agreementValidator;
         $this->cartRepository = $cartRepository;
         $this->submitQuoteValidator = $submitQuoteValidator;
@@ -98,37 +80,24 @@ class Dintero extends Component implements EvaluationInterface
     }
 
     /**
-     * Initialize Dintero checkout
+     * Report whether the payment step is complete
+     *
+     * The redirect towards Dintero is never produced here: it originates from the place order
+     * service, which only hands out a url once the whole checkout validates.
      *
      * @param EvaluationResultFactory $resultFactory
-     * @return \Hyva\Checkout\Model\Magewire\Component\Evaluation\Redirect|EvaluationResultInterface
-     * @throws \Magento\Framework\Exception\LocalizedException
-     * @throws \Magento\Framework\Exception\NoSuchEntityException
-     * @throws \Magento\Payment\Gateway\Http\ClientException
-     * @throws \Magento\Payment\Gateway\Http\ConverterException
+     * @return EvaluationResultInterface
+     * @see \Dintero\HyvaCheckout\Model\Magewire\Payment\PlaceOrderService
      */
     public function evaluateCompletion(EvaluationResultFactory $resultFactory): EvaluationResultInterface
     {
-        if ($this->config->isEmbedded() || $this->config->isEmbeddedExpress()) {
-
-            if ($this->validationResult !== null) {
-                return $this->validationResult;
-            }
-
-            return $resultFactory->createSuccess();
-        }
-
-        $response = $this->client->initSessionFromQuote($this->checkoutSession->getQuote());
-        if (!$response['url']) {
-            return $resultFactory->createErrorMessage(__('Could not initialize Dintero Checkout'));
-        }
-
-        return $resultFactory->createRedirect($response['url']);
+        return $this->validationResult ?? $resultFactory->createSuccess();
     }
 
     /**
      * Check if all terms and conditions are checked if enabled
      *
+     * @param array $agreementIds Hyva hands out a map of agreement id => accepted
      * @return bool
      * @throws LocalizedException
      * @throws \Magento\Framework\Exception\NoSuchEntityException
@@ -141,20 +110,35 @@ class Dintero extends Component implements EvaluationInterface
             throw new LocalizedException(__('Quote not found'));
         }
 
-        if (!$this->agreementValidator->isValid($agreementIds)) {
+        $acceptedIds = $this->getAcceptedAgreementIds($agreementIds);
+
+        if (!$this->agreementValidator->isValid($acceptedIds)) {
             throw new LocalizedException(__('Please, accept the terms and conditions'));
         }
 
-        $quote->getPayment()->setAdditionalInformation('agreement_ids', array_keys(array_filter($agreementIds)));
+        $quote->getPayment()->setAdditionalInformation('agreement_ids', $acceptedIds);
         $this->cartRepository->save($quote);
 
         return true;
     }
 
     /**
+     * Reduce the acceptance map to the list of ids the customer agreed to
+     *
+     * @param array $agreementIds
+     * @return array
+     * @see \Hyva\Checkout\Magewire\Checkout\TermsConditions::$termAcceptance
+     */
+    private function getAcceptedAgreementIds(array $agreementIds)
+    {
+        return array_keys(array_filter($agreementIds));
+    }
+
+    /**
      * Validate checkout
      *
      * @param string $sessionId
+     * @param array $agreementIds Hyva hands out a map of agreement id => accepted
      * @return bool
      * @throws LocalizedException
      */
@@ -195,7 +179,9 @@ class Dintero extends Component implements EvaluationInterface
 
             $quotePayment = $quote->getPayment();
             if ($quotePayment->getExtensionAttributes() !== null) {
-                $quotePayment->getExtensionAttributes()->setAgreementIds(array_keys(array_filter($agreementIds)));
+                $quotePayment->getExtensionAttributes()->setAgreementIds(
+                    $this->getAcceptedAgreementIds($agreementIds)
+                );
             }
 
             if (!$this->dinteroSessionManagement->validateSession($sessionId)) {

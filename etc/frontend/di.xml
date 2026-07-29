@@ -4,4 +4,11 @@
     <type name="Dintero\Checkout\Helper\Config">
         <plugin name="dintero_hyvacheckout_force_default_embed_type" type="Dintero\HyvaCheckout\Plugin\ForceDefaultEmbedType" sortOrder="10"/>
     </type>
+    <type name="Hyva\Checkout\Model\Magewire\Payment\PlaceOrderServiceProvider">
+        <arguments>
+            <argument name="placeOrderServiceList" xsi:type="array">
+                <item name="dintero" xsi:type="object">Dintero\HyvaCheckout\Model\Magewire\Payment\PlaceOrderService</item>
+            </argument>
+        </arguments>
+    </type>
 </config>
