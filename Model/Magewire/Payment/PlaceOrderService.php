@@ -2,6 +2,7 @@
 
 namespace Dintero\HyvaCheckout\Model\Magewire\Payment;
 
+use Dintero\Checkout\Helper\Config as ConfigHelper;
 use Dintero\Checkout\Model\Agreements\Validator as AgreementsValidator;
 use Dintero\Checkout\Model\Api\Client;
 use Dintero\HyvaCheckout\Model\CheckoutMode;
@@ -11,16 +12,19 @@ use Hyva\Checkout\Model\Magewire\Component\EvaluationResultFactory;
 use Hyva\Checkout\Model\Magewire\Component\EvaluationResultInterface;
 use Hyva\Checkout\Model\Magewire\Payment\AbstractOrderData;
 use Hyva\Checkout\Model\Magewire\Payment\AbstractPlaceOrderService;
-use Magento\Checkout\Model\Session as CheckoutSession;
 use Magento\Framework\Exception\LocalizedException;
 use Magento\Quote\Api\CartManagementInterface;
+use Magento\Quote\Api\CartRepositoryInterface;
 use Magento\Quote\Model\Quote;
+use Magento\Sales\Api\OrderRepositoryInterface;
 
 /**
- * Produces the Dintero hosted checkout url for the redirect flow.
+ * Places the order and produces the Dintero hosted checkout url for the redirect flow.
  *
- * This is the only place the redirect may originate from: it runs after the Hyva place order
- * validation and re-validates the quote server side before a url is handed out.
+ * The order is placed before the customer leaves the storefront, exactly like the non Hyva
+ * redirect flow in \Dintero\Checkout\Controller\Payment\Place. That keeps the merchant reference
+ * tied to a committed order increment id, so a retried checkout can never hand out a second
+ * payable Dintero session for an order number that is already in use.
  */
 class PlaceOrderService extends AbstractPlaceOrderService
 {
@@ -45,9 +49,24 @@ class PlaceOrderService extends AbstractPlaceOrderService
     private $agreementsValidator;
 
     /**
-     * @var CheckoutSession $checkoutSession
+     * @var ConfigHelper $configHelper
      */
-    private $checkoutSession;
+    private $configHelper;
+
+    /**
+     * @var CartRepositoryInterface $quoteRepository
+     */
+    private $quoteRepository;
+
+    /**
+     * @var OrderRepositoryInterface $orderRepository
+     */
+    private $orderRepository;
+
+    /**
+     * @var Quote|null $placedQuote
+     */
+    private $placedQuote;
 
     /**
      * @var string|null $redirectUrl
@@ -62,7 +81,9 @@ class PlaceOrderService extends AbstractPlaceOrderService
      * @param CheckoutMode $checkoutMode
      * @param QuoteValidator $quoteValidator
      * @param AgreementsValidator $agreementsValidator
-     * @param CheckoutSession $checkoutSession
+     * @param ConfigHelper $configHelper
+     * @param CartRepositoryInterface $quoteRepository
+     * @param OrderRepositoryInterface $orderRepository
      * @param AbstractOrderData|null $orderData
      */
     public function __construct(
@@ -71,7 +92,9 @@ class PlaceOrderService extends AbstractPlaceOrderService
         CheckoutMode $checkoutMode,
         QuoteValidator $quoteValidator,
         AgreementsValidator $agreementsValidator,
-        CheckoutSession $checkoutSession,
+        ConfigHelper $configHelper,
+        CartRepositoryInterface $quoteRepository,
+        OrderRepositoryInterface $orderRepository,
         ?AbstractOrderData $orderData = null
     ) {
         parent::__construct($cartManagement, $orderData);
@@ -80,17 +103,19 @@ class PlaceOrderService extends AbstractPlaceOrderService
         $this->checkoutMode = $checkoutMode;
         $this->quoteValidator = $quoteValidator;
         $this->agreementsValidator = $agreementsValidator;
-        $this->checkoutSession = $checkoutSession;
+        $this->configHelper = $configHelper;
+        $this->quoteRepository = $quoteRepository;
+        $this->orderRepository = $orderRepository;
     }
 
     /**
-     * The order is created once Dintero returns the customer to dintero/payment/success
+     * The embedded flow places the order from the callback, the redirect flow places it up front
      *
      * @return bool
      */
     public function canPlaceOrder(): bool
     {
-        return false;
+        return $this->checkoutMode->isRedirect();
     }
 
     /**
@@ -101,6 +126,33 @@ class PlaceOrderService extends AbstractPlaceOrderService
     public function canRedirect(): bool
     {
         return $this->checkoutMode->isRedirect();
+    }
+
+    /**
+     * Validate the quote and place the order before the customer is sent to Dintero
+     *
+     * @param Quote $quote
+     * @return int
+     * @throws LocalizedException
+     */
+    public function placeOrder(Quote $quote): int
+    {
+        $this->quoteValidator->validate($quote);
+
+        if (!$this->agreementsValidator->validate($quote->getPayment())) {
+            throw new LocalizedException(__('Please, accept the terms and conditions'));
+        }
+
+        /*
+         * The line id generator is resolved from the quote when the order items are built for the
+         * api request, so the code has to be persisted before the quote is converted into an order.
+         */
+        $quote->setDinteroGeneratorCode($this->configHelper->getLineIdFieldName());
+        $this->quoteRepository->save($quote);
+
+        $this->placedQuote = $quote;
+
+        return parent::placeOrder($quote);
     }
 
     /**
@@ -128,16 +180,20 @@ class PlaceOrderService extends AbstractPlaceOrderService
             );
         }
 
+        if (!$this->placedQuote) {
+            throw new LocalizedException(__('Could not initialize Dintero Checkout'));
+        }
+
         /** @var PlaceOrderRedirect $redirect */
         $redirect = $resultFactory->create(PlaceOrderRedirect::class, [
-            'url' => $this->getRedirectUrl($this->checkoutSession->getQuote(), $orderId)
+            'url' => $this->getRedirectUrl($this->placedQuote, $orderId)
         ]);
 
         return $redirect->withRedirectTemplate('Dintero_HyvaCheckout::main/place-order/redirect.phtml');
     }
 
     /**
-     * Validate the quote and initialize a Dintero session to redirect to
+     * Initialize a Dintero session for the placed order and return the hosted checkout url
      *
      * @param Quote $quote
      * @param int|null $orderId
@@ -152,18 +208,39 @@ class PlaceOrderService extends AbstractPlaceOrderService
             return $this->redirectUrl;
         }
 
-        $this->quoteValidator->validate($quote);
-
-        if (!$this->agreementsValidator->validate($quote->getPayment())) {
-            throw new LocalizedException(__('Please, accept the terms and conditions'));
-        }
-
-        $response = $this->client->initSessionFromQuote($quote);
-
-        if (empty($response['url'])) {
+        if (!$orderId) {
             throw new LocalizedException(__('Could not initialize Dintero Checkout'));
         }
 
-        return $this->redirectUrl = $response['url'];
+        $order = $this->orderRepository->get($orderId);
+        $data = $this->client->initCheckout($order);
+
+        if (($data['error']['code'] ?? null) === 'INVALID_REQUEST_PARAMETER') {
+            throw new LocalizedException(__($this->processErrors($data['error']['errors'] ?? [])));
+        }
+
+        if (empty($data['url'])) {
+            throw new LocalizedException(__('Could not initialize Dintero Checkout'));
+        }
+
+        $order->getPayment()->setAdditionalInformation('session_id', $data['id'] ?? null);
+        $this->orderRepository->save($order);
+
+        return $this->redirectUrl = $this->configHelper->resolveCheckoutUrl($data['url']);
+    }
+
+    /**
+     * Flatten the api validation errors into a single message
+     *
+     * @param array $errors
+     * @return string
+     */
+    private function processErrors($errors)
+    {
+        $errors = array_map(function ($error) {
+            return $error['description'] ?? null;
+        }, $errors);
+
+        return implode(PHP_EOL, array_unique($errors));
     }
 }
